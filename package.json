@@ -1,0 +1,32 @@
+{
+  "name": "w-docx-split",
+  "version": "1.0.0",
+  "main": "dist/w-docx-split.umd.js",
+  "dependencies": {
+    "lodash-es": "^4.17.22",
+    "wsemi": "^1.8.38"
+  },
+  "devDependencies": {
+    "w-package-tools": "^1.1.2"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.mjs",
+    "test": "mocha --parallel --timeout 60000",
+    "deploy": "gh-pages -d docs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuda-lyu/w-docx-split.git"
+  },
+  "keywords": [
+    "package",
+    "tool",
+    "win32com",
+    "html",
+    "docx",
+    "windows",
+    "nodejs"
+  ],
+  "author": "yuda-lyu(semisphere)",
+  "license": "MIT"
+}
