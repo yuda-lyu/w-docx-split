@@ -1,5 +1,5 @@
 # w-docx-split
-A tool for docx2pdf.
+A tool for split docx.
 
 ![language](https://img.shields.io/badge/language-JavaScript-orange.svg) 
 [![npm version](http://img.shields.io/npm/v/w-docx-split.svg?style=flat)](https://npmjs.org/package/w-docx-split) 
@@ -24,5 +24,29 @@ npm i w-docx-split
 #### Example:
 > **Link:** [[dev source code](https://github.com/yuda-lyu/w-docx-split/blob/master/g.mjs)]
 ```alias
-bbb
+import w from 'wsemi'
+import WDocxSplit from './src/WDocxSplit.mjs'
+//import WDocxSplit from 'w-docx-split/src/WDocxSplit.mjs'
+//import WDocxSplit from 'w-docx-split'
+
+async function test() {
+
+    let fpIn = `./test/docin.docx`
+    let strSep = '[systag:sepline]'
+    let fdOut = `./test/out`
+    let opt = {
+        padZero: 3,
+    }
+
+    let r = await WDocxSplit(fpIn, strSep, fdOut, opt)
+    console.log(r)
+    // => ok
+
+    w.fsDeleteFolder(fdOut)
+
+}
+test()
+    .catch((err) => {
+        console.log('catch', err)
+    })
 ```

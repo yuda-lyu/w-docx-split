@@ -1,13 +1,13 @@
 {
   "name": "w-docx-split",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "dist/w-docx-split.umd.js",
   "dependencies": {
     "lodash-es": "^4.17.22",
-    "wsemi": "^1.8.38"
+    "wsemi": "^1.8.66"
   },
   "devDependencies": {
-    "w-package-tools": "^1.1.2"
+    "w-package-tools": "^1.1.11"
   },
   "scripts": {
     "postinstall": "node scripts/install.mjs",
@@ -22,8 +22,8 @@
     "package",
     "tool",
     "win32com",
-    "html",
     "docx",
+    "split",
     "windows",
     "nodejs"
   ],

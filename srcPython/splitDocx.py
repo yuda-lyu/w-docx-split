@@ -63,7 +63,7 @@ def str2b64(v):
 def b642str(v):
     #base64字串轉字串
     import base64
-    return base64.b64decode(v)
+    return base64.b64decode(v).decode('utf-8')
 
 
 def readText(fn):
@@ -124,9 +124,10 @@ def splitDocx(fpIn, strSep, fdOut, opt):
         # groups 可能為 []，代表整份文件都是分隔符或空
         total = len(groups)
 
-        # 逐組輸出
+        # padZero
         padZero = opt.get('padZero', None)
 
+        # 逐組輸出
         for idx, paraIdxList in enumerate(groups, start=1):
 
             # 檔名：1.docx ~ n.docx
@@ -253,9 +254,9 @@ if False:
     
     #inp
     inp={
-        'fpIn':'D:\\- 006 -        開源\\開源-JS-008-4-w-docx-split\\w-docx-split\\srcPython\\bbb\\docin.docx',
+        'fpIn':'./test/docin.docx',
         'strSep':'[systag:sepline]',
-        'fdOut':'D:\\- 006 -        開源\\開源-JS-008-4-w-docx-split\\w-docx-split\\srcPython\\bbb2',
+        'fdOut':'./test',
         'padZero': 0,
     }
     # print(o2j(inp))
