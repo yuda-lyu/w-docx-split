@@ -8,9 +8,7 @@ import execProcess from 'wsemi/src/execProcess.mjs'
 import fsIsFile from 'wsemi/src/fsIsFile.mjs'
 import fsIsFolder from 'wsemi/src/fsIsFolder.mjs'
 import fsCreateFolder from 'wsemi/src/fsCreateFolder.mjs'
-
-
-let fdSrv = path.resolve()
+import autoDownloadFiles from './autoDownloadFiles.mjs'
 
 
 function isWindows() {
@@ -89,28 +87,9 @@ async function WDocxSplit(fpIn, strSep, fdOut, opt = {}) {
     fpIn = path.resolve(fpIn)
     fdOut = path.resolve(fdOut)
 
-    //fnExe
-    let fnExe = `splitDocx.exe`
-
-    //fdExe
-    let fdExe = ''
-    if (true) {
-        let fdExeSrc = `${fdSrv}/src/`
-        let fdExeNM = `${fdSrv}/node_modules/w-docx-split/src/`
-        if (fsIsFile(`${fdExeSrc}${fnExe}`)) {
-            fdExe = fdExeSrc
-        }
-        else if (fsIsFile(`${fdExeNM}${fnExe}`)) {
-            fdExe = fdExeNM
-        }
-        else {
-            return Promise.reject('can not find folder for html2docx')
-        }
-    }
-    // console.log('fdExe', fdExe)
-
-    //prog
-    let prog = `${fdExe}${fnExe}`
+    //prog, 自動定位splitDocx.exe, 無檔案(安裝時npm封鎖scripts致postinstall未執行)則自動下載
+    let { fpExe } = await autoDownloadFiles()
+    let prog = fpExe
     // console.log('prog', prog)
 
     //inp
