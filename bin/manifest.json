@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "pkg": "w-docx-split",
+  "mode": "pinned",
+  "repo": "yuda-lyu/w-docx-split",
+  "commit": "c85382f9a8ce42477844afa5b53b8df55e5a4b19",
+  "files": [
+    {
+      "name": "splitDocx.exe",
+      "path": "bin/splitDocx.exe",
+      "sha256": "6954a73173ffc19209aec960561da878bfc9d03487f66199392e75445c594156",
+      "size": 11184180
+    }
+  ]
+}

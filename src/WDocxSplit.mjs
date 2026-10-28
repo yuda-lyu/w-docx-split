@@ -8,7 +8,11 @@ import execProcess from 'wsemi/src/execProcess.mjs'
 import fsIsFile from 'wsemi/src/fsIsFile.mjs'
 import fsIsFolder from 'wsemi/src/fsIsFolder.mjs'
 import fsCreateFolder from 'wsemi/src/fsCreateFolder.mjs'
-import autoDownloadFiles from './autoDownloadFiles.mjs'
+import ensureBins from './ensureBins.mjs'
+
+
+//fnExe, 切分器名稱(bin/manifest.json之name)
+let fnExe = 'splitDocx.exe'
 
 
 function isWindows() {
@@ -18,6 +22,8 @@ function isWindows() {
 
 /**
  * 依照指定字串分割Docx檔
+ *
+ * 分割由splitDocx.exe調用本機Microsoft Word(win32com)完成，故須於Windows且已安裝Word之機器執行。splitDocx.exe不含於npm包，首次分割時經ensureBins自GitHub(釘選提交)或環境變數W_BIN_MIRROR之鏡像取得，以bin/manifest.json之SHA-256與大小校驗後存於快取(預設為套件根之bin-cache/，可由W_BIN_CACHE改位置)，之後自快取取得(亦校驗)；環境變數W_BIN_OFFLINE=1時不連網。取得失敗則reject字串，內含錯誤代碼(如E_OFFLINE_MISSING、E_HASH_MISMATCH)與原因，詳見README〈外部執行檔〉
  *
  * @param {String} fpIn 輸入來源Html檔位置字串
  * @param {String} strSep 輸入內文會提供之分割字串
@@ -87,9 +93,19 @@ async function WDocxSplit(fpIn, strSep, fdOut, opt = {}) {
     fpIn = path.resolve(fpIn)
     fdOut = path.resolve(fdOut)
 
-    //prog, 自動定位splitDocx.exe, 無檔案(安裝時npm封鎖scripts致postinstall未執行)則自動下載
-    let { fpExe } = await autoDownloadFiles()
-    let prog = fpExe
+    //prog, 經ensureBins取得splitDocx.exe(快取命中亦校驗, 未命中則自鏡像或GitHub取得並校驗), 本函數以字串reject, 故將帶code之Error轉為字串
+    let prog = ''
+    let errBin = null
+    await ensureBins({ names: fnExe })
+        .then((r) => {
+            prog = r[fnExe]
+        })
+        .catch((err) => {
+            errBin = `${isestr(get(err, 'code')) ? `[${err.code}] ` : ''}${isestr(get(err, 'message')) ? err.message : String(err)}`
+        })
+    if (errBin) {
+        return Promise.reject(errBin)
+    }
     // console.log('prog', prog)
 
     //inp
@@ -125,6 +141,10 @@ async function WDocxSplit(fpIn, strSep, fdOut, opt = {}) {
 
     return 'ok'
 }
+
+
+//ensureBins, 以靜態屬性提供(不另加具名匯出, 使UMD打包後default匯出形態不變): 供部署前預先取得splitDocx.exe, 見README〈外部執行檔〉
+WDocxSplit.ensureBins = ensureBins
 
 
 export default WDocxSplit
