@@ -12,7 +12,16 @@
   - 驗證「不轉傳 `floatingManifestUrl`」須傳**無效值**: 該選項只在主幹模式生效,傳有效網址時轉傳與否行為相同(等價變異).
   - `WDocxSplit()` 無法注入 `fetch`: 以攔截 `globalThis.fetch` 斷言(鏡像供檔時一次都不被呼叫;走 GitHub 時只見釘選提交網址一次),攔截器只放行 `https://raw.githubusercontent.com/` 並改指本機 HTTP 伺服器,其餘一律拒絕.
   - T1(`npm pack --dry-run`)須先放誘餌檔(`test/_tmp/…/splitDocx.exe`、`bin-cache/_decoy_/splitDocx.exe`)才能使缺 `/test/_tmp/`、`/bin-cache/` 規則時確定性變紅;`mocha --parallel` 下他測試檔之夾具會與 T1 並行.
-- `WDocxSplit()` 在 `ensureBins` 之後的錯誤處理沿用原狀(exe 把 `error: …` 印到 stdout 且離開碼 0 時,`execProcess` 不 reject,函數仍回 `'ok'`)——此為既有行為,**本輪未動**(範圍外,見狀態檔〈已知缺口〉).
+- `WDocxSplit()` 在 `ensureBins` 之後的錯誤處理沿用原狀(exe 把 `error: …` 印到 stdout 且離開碼 0 時,`execProcess` 不 reject,函數仍回 `'ok'`)——此為當時之既有行為,**該輪未動**;已於 2026-10-31 修(見下〈exe 內部失敗被當成功〉).
 - 平行測試下 Word 只由 `test/WDocxSplit.test.mjs` 啟動(各案循序);輸出夾放 `test/_tmp/WDocxSplit/…`,原 `convert` 案維持用 `./test/out`.
 - 測試鎖排隊可達數十分鐘(他套件獨佔負載試驗時);腳本類驗證(變異、UMD 建置)併入同一次 `--lock` 內執行,減少排隊次數.
 - 變異用副本放 `./tmp/bin-docxsplit/` 下(父層 `node_modules` 自動解析,免目錄連結);`.npmignore`、`.gitignore`、`WDocxSplit.mjs`、`README.md`、`gDistRollup.mjs` 為 CRLF,字串式變異須用 `\r?\n` 或逐行比對.
+
+## exe 內部失敗被當成功(2026-10-31,docxsplit)
+
+- 屬實證據: 直接以 `bin/splitDocx.exe` 處理純文字檔(副檔名 `.docx`)與截半之 docx,stdout 為 `error: (-2147352567, '發生例外狀況。', (0, 'Microsoft Word', '檔案似乎已毀損。', …), None)`、離開碼 0;正常 docx 為 `success`.經 `WDocxSplit()` 修前回 `'ok'`、無輸出檔.根因: `splitDocx.py` 之 `core()` 以 `except:` 吞例外,`run()` 只 print;`execProcess` 只看離開碼.
+- 作法: **不重建 exe**(重建須走 PyInstaller 與 U1 之釘選流程,且須主控提交推送),改在 `WDocxSplit()` 依輸出判定(`src/judgeSplitOutput.mjs`,fail-closed: 須有 `success` 行且無 `error:` 行).即使日後 exe 改以非 0 離開碼回報,輸出判定仍須保留(舊版 exe 可能被釘選).
+- exe 以 ANSI 字碼頁輸出(中文系統 big5),`execProcess` 預設 utf8 解碼會成亂碼(U+FFFD);給 `codeCmd: 'auto'` 即可讀.測試以「訊息不含 U+FFFD」鎖住(變異 `C-no-codeCmd-auto` 被殺).
+- 測試設計: 判定邏輯拆成純函數以便單元測試(不需 Word),真 Word 之整合案只覆蓋「非 docx、損毀 docx」兩種真實失敗;exe 之 sha256 釘在清單,無法以假 exe 替換,故不用假 exe 造失敗輸出.
+- 0 位元組之 `.docx` 被 Word 當空白文件成功開啟(exe 回 `success`、輸出 `001.docx`),不屬 exe 失敗,別拿它當失敗案例.
+- 變異腳本思路: 單一工作副本(`./tmp/docxsplit/mut/work`: `src/`、`bin/`〔exe 與清單〕、`test/`、`package.json`)逐式改 `src` 後以 mocha 絕對路徑執行,對照組前後各跑一次;變異字串避開 CRLF(只用單行子字串).

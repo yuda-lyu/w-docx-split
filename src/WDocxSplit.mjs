@@ -9,6 +9,7 @@ import fsIsFile from 'wsemi/src/fsIsFile.mjs'
 import fsIsFolder from 'wsemi/src/fsIsFolder.mjs'
 import fsCreateFolder from 'wsemi/src/fsCreateFolder.mjs'
 import ensureBins from './ensureBins.mjs'
+import judgeSplitOutput from './judgeSplitOutput.mjs'
 
 
 //fnExe, 切分器名稱(bin/manifest.json之name)
@@ -30,7 +31,7 @@ function isWindows() {
  * @param {String} fdOut 輸入轉出Docx檔位置字串
  * @param {Object} [opt={}] 輸入設定物件，預設{}
  * @param {Integer} [opt.padZero=0] 輸入是否補0位數整數，例如padZero=3時檔名會變成001.docx，預設0
- * @returns {Promise} 回傳Promise，resolve回傳成功訊息，reject回傳錯誤訊息
+ * @returns {Promise} 回傳Promise，resolve回傳成功訊息'ok'，reject回傳錯誤訊息字串。reject之字串有下列型態：參數檢測失敗為說明字串；取不到執行檔為`[錯誤代碼] 原因`(如`[E_OFFLINE_MISSING] ...`)；splitDocx.exe無法執行或離開碼非0為execProcess之訊息(如`code[N]:\n...`)；splitDocx.exe執行後自報失敗(如輸入非docx、docx損毀、Word無法開啟)為`[E_SPLIT_FAILED] 原因`，原因為exe輸出之診斷(已依系統字碼頁解碼，不回顯輸入路徑，但Word之診斷可能自行含檔名)，此時不會產生輸出檔(分割中途失敗時，失敗前已寫出之檔不會被清除)。splitDocx.exe不論成敗離開碼皆為0，故以其輸出判定成敗：須有`success`行且無`error:`行才resolve，空輸出或未知輸出亦視為失敗
  * @example
  *
  * import w from 'wsemi'
@@ -122,8 +123,12 @@ async function WDocxSplit(fpIn, strSep, fdOut, opt = {}) {
     let b64Input = str2b64(cInput)
     // console.log('b64Input', b64Input)
 
-    //execProcess
-    await execProcess(prog, b64Input)
+    //execProcess, splitDocx.exe以ANSI字碼頁輸出(中文系統為big5), 故codeCmd給auto使失敗訊息不亂碼
+    let output = ''
+    await execProcess(prog, b64Input, { codeCmd: 'auto' })
+        .then((r) => {
+            output = r
+        })
         .catch((err) => {
             console.log('execProcess catch', err)
             errTemp = err.toString()
@@ -134,10 +139,11 @@ async function WDocxSplit(fpIn, strSep, fdOut, opt = {}) {
         return Promise.reject(errTemp)
     }
 
-    // //check
-    // if (!isestr(output)) {
-    //     return Promise.reject(`output[${cstr(output)}] is not an effective string`)
-    // }
+    //check, splitDocx.exe內部失敗時只於stdout印出`error: ...`且離開碼為0, execProcess不會reject, 故須依輸出判定
+    let j = judgeSplitOutput(output)
+    if (!j.ok) {
+        return Promise.reject(j.msg)
+    }
 
     return 'ok'
 }

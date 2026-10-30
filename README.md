@@ -51,6 +51,17 @@ test()
     })
 ```
 
+## Breaking changes
+
+### 分割失敗改為 reject（下一版）
+
+- 舊版：`splitDocx.exe` 內部失敗（如輸入非 docx、docx 損毀、Word 無法開啟）時，只在 stdout 印 `error: …` 且離開碼為 0，`WDocxSplit()` 仍 resolve `'ok'`，呼叫端無從得知失敗，也沒有輸出檔。
+- 新版：`WDocxSplit()` 依 exe 輸出判定成敗，須有 `success` 行且無 `error:` 行才 resolve `'ok'`；`error:` 行（即使同時有 `success`）、空輸出、未知輸出一律以字串 reject，格式為 `[E_SPLIT_FAILED] 原因`，原因為 exe 輸出之診斷（已依系統字碼頁解碼，不回顯輸入路徑；但 Word 之診斷可能自行含檔名）。
+- 其他 reject 型態不變：參數檢測失敗為說明字串；取不到執行檔為 `[錯誤代碼] 原因`；exe 無法執行或離開碼非 0 為 `code[N]:\n…`。
+- 下游影響：原本以 `.then` 視為成功之呼叫端，遇上述失敗時改進 `.catch`；需區分失敗種類時以 `err.startsWith('[E_SPLIT_FAILED]')` 判斷。
+- 失敗時不產生輸出檔；若分割進行到一半才失敗，失敗前已寫出之檔不會被清除。
+- `splitDocx.exe` 本身未重建（離開碼仍恆為 0），判定只靠輸出。
+
 ## 外部執行檔
 
 本套件執行時需要下列外部執行檔，不含於 npm 包：
@@ -67,7 +78,7 @@ test()
 - 離線部署：
   1. 在可連網之電腦設 `W_BIN_CACHE=<空資料夾>`，呼叫本套件之 `ensureBins()` 一次（或使用到分割功能一次）。
   2. 把該資料夾整個帶到內網電腦，設 `W_BIN_MIRROR=<該資料夾>`（全離線時另設 `W_BIN_OFFLINE=1`）。
-- 取不到執行檔時，`WDocxSplit()` 以字串 reject，格式為 `[錯誤代碼] 原因`（如 `[E_OFFLINE_MISSING] …`）；`ensureBins()` 則 reject 帶 `code` 之 Error。
+- 取不到執行檔時，`WDocxSplit()` 以字串 reject，格式為 `[錯誤代碼] 原因`（如 `[E_OFFLINE_MISSING] …`）；`ensureBins()` 則 reject 帶 `code` 之 Error。執行檔取得後分割失敗者見〈Breaking changes〉（`[E_SPLIT_FAILED] 原因`）。
 - 舊版之 `src/autoDownloadFiles.mjs` 保留為經 `ensureBins` 之相容層（已標 `@deprecated`），回傳之路徑位於快取而非 `src/`。
 
 ```alias

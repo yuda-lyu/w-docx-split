@@ -262,6 +262,79 @@ describe('WDocxSplit', function() {
 
     })
 
+    describe('when splitDocx.exe fails internally (it prints "error: ..." on stdout and still exits with code 0)', function() {
+        let fdMirror = path.join(fdt, 'mirror')
+        let fdCache = path.join(fdt, 'cache')
+        let fdIn = path.join(fdt, 'in')
+
+        before(function() {
+            fs.rmSync(fdt, { recursive: true, force: true })
+            let fdSha = path.join(fdMirror, manifest.pkg, entry.sha256)
+            fs.mkdirSync(fdSha, { recursive: true })
+            fs.copyFileSync(entry.path, path.join(fdSha, entry.name))
+            fs.mkdirSync(fdIn, { recursive: true })
+
+            //非docx: 副檔名為docx之純文字檔
+            fs.writeFileSync(path.join(fdIn, 'notdocx.docx'), 'this is plain text, not a docx')
+
+            //損毀docx: 正常docx只取前一半(zip結尾遺失)
+            let buf = fs.readFileSync(fpIn)
+            fs.writeFileSync(path.join(fdIn, 'broken.docx'), buf.subarray(0, Math.floor(buf.length / 2)))
+
+            setEnv({ W_BIN_CACHE: fdCache, W_BIN_MIRROR: fdMirror, W_BIN_OFFLINE: '1' })
+            hookFetch()
+        })
+
+        after(function() {
+            unhookFetch()
+            restoreEnv()
+            fs.rmSync(fdt, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })
+        })
+
+        for (let name of ['notdocx.docx', 'broken.docx']) {
+
+            it(`rejects a string "[E_SPLIT_FAILED] ..." instead of resolving "ok" for ${name}, writes no output and does not echo the input paths`, async function() {
+                let fpBad = path.join(fdIn, name)
+                let fdOutBad = path.join(fdt, `out-${name}`)
+                let r = null
+                let err = null
+                await WDocxSplit(fpBad, strSep, fdOutBad, opt)
+                    .then((v) => {
+                        r = v
+                    })
+                    .catch((e) => {
+                        err = e
+                    })
+
+                //exe內部失敗不得被當成功: 回傳不得為'ok', 須以字串reject(既有reject型態), 以`[code] message`呈現
+                assert.strict.equal(r, null, `resolved [${r}]`)
+                assert.strict.equal(typeof err, 'string')
+                assert.strict.equal(err.startsWith('[E_SPLIT_FAILED] '), true, err)
+
+                //訊息為exe之診斷(已依系統字碼頁解碼, 無亂碼), 不回顯輸入路徑(規格V20)
+                assert.strict.equal(err.length > '[E_SPLIT_FAILED] '.length, true, err)
+                assert.strict.equal(err.includes('�'), false, err)
+                assert.strict.equal(err.includes(fpBad), false, err)
+                assert.strict.equal(err.includes(fdOutBad), false, err)
+
+                //失敗不得留下輸出檔
+                assert.strict.equal(fs.existsSync(path.join(fdOutBad, '001.docx')), false)
+                assert.strict.equal(fs.existsSync(fdOutBad) && fs.readdirSync(fdOutBad).length > 0, false)
+                assert.strict.deepStrictEqual(fetchCalls, [])
+            })
+
+        }
+
+        it('still resolves "ok" for a valid docx after the failures (the failure judgement does not break the success path)', async function() {
+            let fdOutOk = path.join(fdt, 'out-ok')
+            let r = await WDocxSplit(fpIn, strSep, fdOutOk, opt)
+            assert.strict.equal(r, 'ok')
+            assert.strict.equal(sizeOf(path.join(fdOutOk, '001.docx')) > 12000, true)
+            assert.strict.equal(sizeOf(path.join(fdOutOk, '002.docx')) > 12000, true)
+        })
+
+    })
+
     describe('when the executable is unavailable', function() {
         let fdCache = path.join(fdt, 'cache-off')
 

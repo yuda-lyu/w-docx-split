@@ -5,7 +5,9 @@
 ## 依指定字串分割 docx(`WDocxSplit`)
 
 - 現況: 僅 Windows;以 `splitDocx.exe`(`srcPython/` 以 win32com 驅動 Word,PyInstaller 打包)分割,輸入 base64 JSON(`fpIn`、`strSep`、`fdOut`、`padZero`),輸出 `001.docx`…;函數以字串 reject(參數錯誤、取不到執行檔、執行失敗).
-- 測試: `test/WDocxSplit.test.mjs`(需本機有 Word;執行檔以本機鏡像或本機 HTTP 伺服器供檔,不連外網).指令: `npm test`.
+- **exe 內部失敗判定(R-SPLIT-RESULT-01,2026-10-31 已修)**: exe 不論成敗離開碼皆為 0,故 `WDocxSplit()` 依輸出判定(`src/judgeSplitOutput.mjs`): 須有 `success` 行且無 `error:` 行才 resolve `'ok'`,否則 reject `[E_SPLIT_FAILED] 原因`(非 docx、損毀 docx 已實測 reject);輸出以 `codeCmd: 'auto'` 解碼.exe 本身未重建.對外行為變化見 README〈Breaking changes〉.
+- 測試: `test/WDocxSplit.test.mjs`(需本機有 Word;執行檔以本機鏡像或本機 HTTP 伺服器供檔,不連外網;含 exe 失敗之 describe)、`test/unit-judgeSplitOutput.test.mjs`(純函數,不需 Word).指令: `npm test`.
+- 已知缺口: ①Word 對 0 位元組之 `.docx` 視為空白文件並成功(exe 回 `success`、輸出 `001.docx`),屬 Word 行為、本輪未處理;②參數檢測之既有訊息(`fpIn[…] does not exist`、`strSep[…] is not an effective string`)回顯輸入值,與輸入參數規格 V20 不合,本輪範圍外未改;③分割中途失敗時,失敗前已寫出之 `00N.docx` 不清除.
 
 ## 外部執行檔 `splitDocx.exe`(R-BIN-DOCXSPLIT-01)
 
@@ -17,6 +19,7 @@
   1. 真實 GitHub 網址之下載未實測(測試不得連外網;網址形狀由本機伺服器路徑斷言).
   2. 至舊版淘汰後移除 `src/splitDocx.exe`(另案).
   3. `dist/` 隨發布重新產製(repo 內 `dist/` 仍為舊版);以現行 `toolg/gDistRollup.mjs` 設定建置到暫存夾並模擬安裝實測: UMD 可用、`ensureBins` 靜態屬性可用、快取落在模擬套件根、經 UMD 實際分割輸出 `001.docx`/`002.docx`.
-  4. **既有行為,本輪未動(範圍外)**: `splitDocx.exe` 內部失敗時只在 stdout 印 `error: …` 且離開碼為 0,`execProcess` 不 reject,`WDocxSplit()` 仍回 `'ok'`(此前即如此).
+  4. (已於 2026-10-31 處理,見上〈exe 內部失敗判定〉.)
   5. `toolg/gDistRollup.mjs` 有既有未使用之 `getFiles` import(eslint `no-unused-vars`),依規範只提出、未刪.
-- 最近一次驗證(2026-10-28): `npm test` 35 passing(3 檔: `unit-binManifest`、`api-ensureBins`、`WDocxSplit`);變異 37 式皆殺(對照組未變異副本全綠);報告見主控任務 20261028054319 `agent-out/bin-docxsplit-修正報告.md`.
+- 最近一次驗證(2026-10-31,docxsplit): `npm test` 49 passing(4 檔: `unit-binManifest`、`unit-judgeSplitOutput`、`api-ensureBins`、`WDocxSplit`);修前紅(非 docx、損毀 docx 回 `'ok'`)、本輪變異 15 式皆殺(對照組全綠);wsemi 1.9.33;報告見主控任務 20261031065406 `agent-out/docxsplit-修正報告.md`.
+- 前次驗證(2026-10-28): `npm test` 35 passing;bin-docxsplit 變異 37 式皆殺;報告見主控任務 20261028054319 `agent-out/bin-docxsplit-修正報告.md`.
