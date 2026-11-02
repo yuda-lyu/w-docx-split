@@ -1,15 +1,22 @@
+# 首段: 完整抄錄 .gitignore (npm 一旦有 .npmignore 即不讀 .gitignore; .gitignore 改動時兩者同步)
 node_modules
-srcPython/build
-srcPython/dist
-src/splitDocx.exe
-/bin/*
-!/bin/manifest.json
-/bin-cache/
-/test/_tmp/
+test/_tmp
 .agents
-.opencode
-.claude
 CLAUDE*.md
 AGENTS*.md
 .env
 tmp
+.opencode
+.claude
+srcPython/build
+srcPython/dist
+/bin-cache/
+
+# 第 1 條 外部執行檔與其附屬 (dspec/自有套件之npm發布範圍 原則 2; dspec/外部執行檔之存放下載校驗與離線 S1、S5)
+# bin/ 下之執行檔不入包, 僅保留清單 manifest.json (gitignore 語意下排除整個資料夾後無法再納入其中之檔, 故用 /bin/*)
+/bin/*
+!/bin/manifest.json
+# 舊版相容之執行檔副本 (舊版自主幹 src/splitDocx.exe 下載, 保留於 repo, 與 bin/ 位元相同)
+src/splitDocx.exe
+# 存放執行檔副本之測試暫存夾 (平行測試下 npm pack 會掃到他案留下之副本)
+/test/_tmp/

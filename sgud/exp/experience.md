@@ -17,6 +17,12 @@
 - 測試鎖排隊可達數十分鐘(他套件獨佔負載試驗時);腳本類驗證(變異、UMD 建置)併入同一次 `--lock` 內執行,減少排隊次數.
 - 變異用副本放 `./tmp/bin-docxsplit/` 下(父層 `node_modules` 自動解析,免目錄連結);`.npmignore`、`.gitignore`、`WDocxSplit.mjs`、`README.md`、`gDistRollup.mjs` 為 CRLF,字串式變異須用 `\r?\n` 或逐行比對.
 
+## npm 包檢查隨發布範圍規格改斷言(2026-11-02,pk-docx-split)
+
+- 舊 T1 斷言 `sgud/` 不入包,與現行 `dspec/自有套件之npm發布範圍.md`(npm 包＝git 版控之內容,`sgud/` 隨包)相反,全庫連動跟跑時紅;改為「不得入包」只列外部執行檔與壓縮檔、`bin/` 除清單外之檔、`CLAUDE*.md`、`tmp/`、`test/_tmp/`、`.env`,另斷言 `sgud/state/state.md` 與 `test/tools/*` 隨包.不要再於 T1 加 `docs/`、`test/`、`toolg/`、`sgud/` 之「不在」斷言.
+- 變異以暫放假檔(`dist/_mut_fake.exe`、`src/_mut_fake.dll`)與暫改 `.npmignore`(加 `sgud`、加 `test/tools`、拿掉 `CLAUDE*.md`、拿掉 `tmp`)進行;逐式還原後以 `sha256sum` 與變異前比對,還原 `.npmignore` 時 Edit 的 `old_string` 須先確認唯一(曾因重複行而還原錯位,以 hash 比對發現並修正).
+- `.npmignore` 一旦存在即不讀 `.gitignore`,首段須逐行抄錄 `.gitignore`;`#` 註解行與空行不影響 npm 打包(改寫前後 `npm pack --dry-run` 之檔案清單相同).
+
 ## exe 內部失敗被當成功(2026-10-31,docxsplit)
 
 - 屬實證據: 直接以 `bin/splitDocx.exe` 處理純文字檔(副檔名 `.docx`)與截半之 docx,stdout 為 `error: (-2147352567, '發生例外狀況。', (0, 'Microsoft Word', '檔案似乎已毀損。', …), None)`、離開碼 0;正常 docx 為 `success`.經 `WDocxSplit()` 修前回 `'ok'`、無輸出檔.根因: `splitDocx.py` 之 `core()` 以 `except:` 吞例外,`run()` 只 print;`execProcess` 只看離開碼.

@@ -8,6 +8,7 @@ import fsEnsureBins from 'wsemi/src/fsEnsureBins.mjs'
 
 
 //規格: 外部執行檔之存放下載校驗與離線(制式規格) S1、S2、S5、M1、M2、M4、F12、§8 T1、T2
+//規格: 自有套件之npm發布範圍 原則1、原則2〈套件測試之 npm 包檢查〉(2026-11-02 裁示A)、原則3、原則4
 describe(`bin/manifest.json`, function() {
     this.timeout(120000)
 
@@ -108,7 +109,9 @@ describe(`bin/manifest.json`, function() {
         assert.strict.equal(lines('.gitattributes').includes('bin/** binary'), true) //F12
     })
 
-    it(`should not pack external executables into the npm package, only bin/manifest.json (S1, S5, T1)`, function() {
+    //規格: 自有套件之npm發布範圍 原則1(npm包＝git版控之內容, sgud/、docs/、test/、toolg/皆隨包)、原則2〈套件測試之 npm 包檢查〉①(不得入包只列外部執行檔與壓縮檔、bin/除manifest.json外之檔、CLAUDE*.md、tmp/、test/_tmp/、.env)、原則4(sgud/、test/tools/一律不排除)
+    //②大小上限(只計src/、dist/、bin/): 本檔原無大小斷言, 不新增(門檻由主控判定)
+    it(`should not pack external executables, archives or local-only files into the npm package, only bin/manifest.json, while sgud/ and test/tools/ ride along (S1, S5, T1; npm發布範圍 原則1、原則2〈套件測試之 npm 包檢查〉①、原則4)`, function() {
         //先放誘餌檔使缺規則時確定性變紅: 測試暫存(他測試平行執行時放有執行檔副本)與快取夾內各放一個
         fs.mkdirSync(`${fdt}/leak`, { recursive: true })
         fs.writeFileSync(`${fdt}/leak/splitDocx.exe`, 'MZ')
@@ -118,10 +121,22 @@ describe(`bin/manifest.json`, function() {
         let r = JSON.parse(execSync('npm pack --dry-run --json', { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }))
         let info = Array.isArray(r) ? r[0] : Object.values(r)[0] //npm 11以前為陣列, npm 12起為以套件名為鍵之物件
         let fps = info.files.map((v) => v.path)
-        assert.strict.deepStrictEqual(fps.filter((v) => /\.(exe|dll|msi|zip|7z|\d{3})$/i.test(v)), [])
+
+        //原則2①不得入包: 外部執行檔與壓縮檔(含分片壓縮檔.001等)
+        assert.strict.deepStrictEqual(fps.filter((v) => /\.(exe|dll|node|msi|zip|7z|gz|tgz|\d{3})$/i.test(v)), [])
+
+        //原則2①不得入包: bin/除manifest.json外之檔(含bin-cache/)與舊路徑檔
         assert.strict.deepStrictEqual(fps.filter((v) => v.startsWith('bin/') || v.startsWith('bin-cache/')), ['bin/manifest.json'])
         assert.strict.equal(fps.includes('src/splitDocx.exe'), false)
-        assert.strict.deepStrictEqual(fps.filter((v) => v.startsWith('test/_tmp/') || v.startsWith('sgud/') || v.startsWith('tmp/')), [])
+
+        //原則2①不得入包: CLAUDE*.md、tmp/、test/_tmp/、.env
+        assert.strict.deepStrictEqual(fps.filter((v) => /(^|\/)CLAUDE[^/]*\.md$/.test(v) || /(^|\/)\.env$/.test(v) || /(^|\/)tmp\//.test(v) || v.startsWith('test/_tmp/')), [])
+
+        //原則1、4隨包: git版控之sgud/與test/tools/不得被排除(docs/、test/、toolg/等同依原則1隨包, 不斷言其不在)
+        assert.strict.equal(fps.includes('sgud/state/state.md'), true, 'sgud/state/state.md is missing from the npm package')
+        for (let n of fs.readdirSync('test/tools')) {
+            assert.strict.equal(fps.includes(`test/tools/${n}`), true, `test/tools/${n} is missing from the npm package`)
+        }
     })
 
 })
