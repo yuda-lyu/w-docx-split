@@ -3,13 +3,13 @@
   "pkg": "w-docx-split",
   "mode": "pinned",
   "repo": "yuda-lyu/w-docx-split",
-  "commit": "c85382f9a8ce42477844afa5b53b8df55e5a4b19",
+  "commit": "6a89b3f17a0d96673a5d03d19b4a51772cc248c3",
   "files": [
     {
       "name": "splitDocx.exe",
       "path": "bin/splitDocx.exe",
-      "sha256": "6954a73173ffc19209aec960561da878bfc9d03487f66199392e75445c594156",
-      "size": 11184180
+      "sha256": "1df933b6c593481021f77f8f2f1f70226e47208ad735ac7d64462ce88194ed73",
+      "size": 9518106
     }
   ]
 }
