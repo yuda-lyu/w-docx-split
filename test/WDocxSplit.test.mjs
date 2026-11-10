@@ -5,6 +5,9 @@ import { spawnSync } from 'child_process'
 import w from 'wsemi'
 import assert from 'assert'
 import WDocxSplit from '../src/WDocxSplit.mjs'
+import { setBinEnv } from './tools/binEnv.mjs'
+import { genDocx, docxXml } from './tools/docxFixture.mjs'
+import { sleep, wordPids, isAutomationWord, waitWordGone, killNewAutomationWords, clearDisabledItems, startHeldWord, startBorrower, startVisibleWordWatch } from './tools/wordInstance.mjs'
 
 
 function isWindows() {
@@ -370,6 +373,403 @@ describe('WDocxSplit', function() {
             assert.strict.deepStrictEqual(fetchCalls, [])
         })
 
+    })
+
+})
+
+
+describe('WDocxSplit Word instance isolation', function() {
+
+    //check
+    if (!isWindows()) {
+        return
+    }
+
+    //規格: 主控排程第408項(ds408, 2026-11-10, 源自使用端之調查; 範本為w-html2docx之hd408與w-docx2html之dh408): 分割器每次另開獨立之Word實例(DispatchEx), 只結束本行程所開者, 輸入檔以唯讀開啟
+    //  ①他行程已開之Word(含其未存內容)不被借用, 不被結束; ②兩行程並行分割(甲進行中乙完整分割完、同一輸入檔同時與錯開1.5秒)皆成功;
+    //  ③例外路徑(輸出路徑無效, 輸入檔不存在, 輸入檔非docx)亦只結束自己之實例且不殘留WINWORD; ④本行程之實例被他行程(舊寫法Dispatch)連上並開文件時, 分割完不結束該實例;
+    //  ⑤輸出路徑即輸入檔時照改前行為(同一錯誤, 輸入檔不變)
+    //  輸入為docx, 無http資源可扣住分割: 以大量段落之docx使分割持續十餘秒(逐段落經COM掃描與拷貝), 並以可觀察條件同步(分割器之WINWORD出現; 借用者見到實例內文件數達1=輸入檔已開啟)
+    //  他行程之Word以PowerShell經COM扮演(見tools/wordInstance.mjs), 一律隱藏; 本組須在無其他Word時執行(見before)
+
+    let fdTmp = path.resolve('./test/_tmp/WDocxSplit-word')
+    let fdOut = path.join(fdTmp, 'out')
+    let sep = '[systag:sepline]'
+
+    //nHeavy, 重型docx每側之段落數(共2側, 分割約十餘秒); nMid, 並行案每側之段落數
+    let nHeavy = 400
+    let nMid = 150
+
+    //pre, 本組開始時已存在之WINWORD(須為空, 見before); null為本組未執行(略過或初始化前失敗), 此時after不結束任何WINWORD
+    let pre = null
+
+    //restoreBinEnv, splitDocx.exe自本機鏡像(取自repo內bin/)取得, 不連外網
+    let restoreBinEnv = null
+
+    //watch, 可見Word視窗之監看(規格: 不得開啟可見之Word視窗)
+    let watch = null
+
+    //prog, splitDocx.exe之路徑(直接呼叫用)
+    let prog = null
+
+    let fpStopOf = (name) => {
+        return path.join(fdTmp, `${name}.stop`)
+    }
+
+    //genSplit, 內容為: 標記mark+'A', n個填充段落, 分割字串, 標記mark+'B', n個填充段落之docx(分割為2份, 各含自己之標記)
+    let genSplit = (name, mark, n) => {
+        let texts = [`${mark}A`]
+        for (let i = 0; i < n; i++) {
+            texts.push(`filler A ${i} lorem ipsum dolor sit amet consectetur adipiscing elit`)
+        }
+        texts.push(sep, `${mark}B`)
+        for (let i = 0; i < n; i++) {
+            texts.push(`filler B ${i} lorem ipsum dolor sit amet consectetur adipiscing elit`)
+        }
+        return genDocx(path.join(fdTmp, `${name}.docx`), texts)
+    }
+
+    //startSplit, 以WDocxSplit分割(本套件之對外API), 立即回傳狀態物件c, c.p於分割結束時resolve為c, 不拋錯; 結束後c.x1、c.x2為001.docx、002.docx之內文(無此檔為空字串)
+    let startSplit = (fpIn, name) => {
+        let fd = path.join(fdOut, name)
+        let c = { ok: false, err: '', fd, files: [], x1: '', x2: '', done: false, p: null }
+        c.p = WDocxSplit(fpIn, sep, fd, { padZero: 3 })
+            .then((v) => {
+                c.ok = v === 'ok'
+            })
+            .catch((e) => {
+                c.err = String(e)
+            })
+            .then(() => {
+                c.files = fs.existsSync(fd) ? fs.readdirSync(fd).sort() : []
+                c.x1 = docxXml(path.join(fd, '001.docx'))
+                c.x2 = docxXml(path.join(fd, '002.docx'))
+                c.done = true
+                return c
+            })
+        return c
+    }
+
+    //assertSplit, 規格: 分割成功, 001.docx含mark+'A'且不含mark+'B'與分割字串, 002.docx含mark+'B'且不含mark+'A'; 不含other(他行程之未存文字或他分割之標記)
+    let assertSplit = (c, mark, others = []) => {
+        assert.strict.deepEqual(true, c.ok, c.err)
+        assert.strict.deepEqual(['001.docx', '002.docx'], c.files)
+        assert.strict.deepEqual([true, false, false], [c.x1.includes(`${mark}A`), c.x1.includes(`${mark}B`), c.x1.includes('systag')], mark)
+        assert.strict.deepEqual([true, false], [c.x2.includes(`${mark}B`), c.x2.includes(`${mark}A`)], mark)
+        for (let s of others) {
+            assert.strict.deepEqual([false, false], [c.x1.includes(s), c.x2.includes(s)], s)
+        }
+    }
+
+    //runExe, 直接呼叫分割器(略過WDocxSplit), 回傳{ status, out, err }; 分割器以標準輸出回報success或error: ..., 離開碼皆為0
+    let runExe = (inp) => {
+        let r = spawnSync(prog, [Buffer.from(JSON.stringify(inp), 'utf8').toString('base64')], { encoding: 'latin1', windowsHide: true, timeout: 120000 })
+        return { status: r.status, out: String(r.stdout).trim(), err: String(r.stderr).trim() }
+    }
+
+    //newPids, 本組開始後新出現之WINWORD
+    let newPids = () => {
+        return wordPids().filter((v) => !pre.includes(v))
+    }
+
+    //untilNewWord, 等(except以外之)新WINWORD出現(即分割器所開之實例), 分割先結束則回傳false
+    let untilNewWord = async (c, except = [], ms = 60000) => {
+        let t0 = Date.now()
+        while (Date.now() - t0 < ms) {
+            if (newPids().filter((v) => !except.includes(v)).length > 0) {
+                return true
+            }
+            if (c.done) {
+                return false
+            }
+            await sleep(100)
+        }
+        return false
+    }
+
+    //ownerFiles, 夾內Word之擁有者檔(~$開頭): 可寫開啟時Word於檔旁建立, 唯讀開啟不建立
+    let ownerFiles = () => {
+        return fs.readdirSync(fdTmp).filter((v) => v.startsWith('~$'))
+    }
+
+    //assertHeldIntact, H於分割後仍在, 其後連續2次讀取皆為文件數1且未存文字不變, 自始無讀取失敗
+    let assertHeldIntact = async (h) => {
+        let i = h.lines.length
+        for (let k = 0; k < 2; k++) {
+            let { i: j, line } = await h.waitLine(/^(DOCS|ERR)/, i)
+            assert.strict.deepEqual(`DOCS 1 ${h.text}`, line)
+            i = j + 1
+        }
+        assert.strict.deepEqual([], h.lines.filter((v) => /^(ERR|STDERR|SPAWNERR)/.test(v)))
+        assert.strict.deepEqual(true, wordPids().includes(h.pid), `held WINWORD ${h.pid}`)
+    }
+
+    //assertNoVisible, 規格: 自監看第iw行起無可見之Word視窗(等監看再完成一輪後判定)
+    let assertNoVisible = async (iw) => {
+        assert.strict.deepEqual([], await watch.visibleSince(iw))
+    }
+
+    before(async function() {
+        this.timeout(120000)
+
+        //前一組之分割器所開之Word可能仍在結束中
+        await waitWordGone(wordPids().filter(isAutomationWord), 30000)
+
+        //有其他Word(含使用者開啟者)時不跑本組: 修前(Dispatch)之分割器會借用並以不儲存結束之; ④之他行程以GetActiveObject連上時亦無法確定連上本行程之實例
+        let pids = wordPids()
+        if (pids.length > 0) {
+            console.log(`skip [Word instance isolation]: other WINWORD is running(${pids.join(',')})`)
+            this.skip()
+        }
+        pre = pids
+
+        restoreBinEnv = setBinEnv('WDocxSplit-word-bin')
+
+        //並行分割前先取得分割器至快取, 免兩個分割同時寫快取
+        prog = (await WDocxSplit.ensureBins({ names: 'splitDocx.exe' }))['splitDocx.exe']
+
+        fs.rmSync(fdTmp, { recursive: true, force: true })
+        fs.mkdirSync(fdOut, { recursive: true })
+
+        //先前被強制結束之Word所留下、指向本套件檔案之停用項目, 會使開檔跳出可見訊息框而停住, 先清除
+        let rd = clearDisabledItems(path.resolve('.'))
+        if (rd.removed.length > 0 || rd.failed.length > 0) {
+            console.log(`Word disabled items under this package: ${JSON.stringify(rd)}`)
+        }
+
+        watch = await startVisibleWordWatch(fpStopOf('watch'))
+    })
+
+    after(async function() {
+        this.timeout(60000)
+
+        //nKilledByWatch, 監看結束之可見視窗所屬Word數(被強制結束者亦會留下停用項目)
+        let nKilledByWatch = 0
+        if (watch) {
+            await watch.stop()
+            nKilledByWatch = watch.lines.filter((v) => /^KILLED/.test(v)).length
+        }
+
+        //收尾: 只結束本組新出現且經COM自動化啟動之WINWORD(各案已斷言不殘留, 此處為失敗時之清理); 有強制結束者(含監看所結束者)再清其可能留下之停用項目
+        if (pre !== null) {
+            let rk = await killNewAutomationWords(pre)
+            if (rk.killed.length > 0 || nKilledByWatch > 0) {
+                let rd = clearDisabledItems(path.resolve('.'))
+                console.log(`cleanup: killed WINWORD ${JSON.stringify(rk)}, Word disabled items ${JSON.stringify(rd)}`)
+            }
+        }
+        if (restoreBinEnv) {
+            restoreBinEnv()
+        }
+        fs.rmSync(fdTmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })
+        try {
+            fs.rmdirSync(path.resolve('./test/_tmp')) //尚有其他測試之暫存時非空, 略過
+        }
+        catch (err) {}
+    })
+
+    it('①他行程已開之Word(含未存文件)不被借用亦不被結束: 分割期間另起WINWORD, 分割完原實例仍在且文件數與未存文字不變, 輸入檔唯讀開啟, 分割器之WINWORD不殘留', async function() {
+        this.timeout(180000)
+        let iw = watch.lines.length
+        let h = await startHeldWord(fpStopOf('held1'))
+        try {
+            let c = startSplit(genSplit('held1', 'MarkHeld1', nHeavy), 'held1')
+
+            //規格①: 分割進行中有H以外之WINWORD, 即分割器另起之實例(未借用H)
+            assert.strict.deepEqual(true, await untilNewWord(c, [h.pid]), 'split ended before another WINWORD appeared')
+            let during = newPids()
+            assert.strict.deepEqual(true, during.includes(h.pid) && during.filter((v) => v !== h.pid).length >= 1, JSON.stringify({ during, held: h.pid }))
+            let mine = during.filter((v) => v !== h.pid)
+
+            //規格(輸入檔唯讀開啟): 分割器之Word開著輸入檔(實例內已有文件)期間, 輸入檔旁無擁有者檔(~$); 可寫開啟者Word會建立
+            let t0 = Date.now()
+            while (!c.done && Date.now() - t0 < 60000 && !fs.existsSync(path.join(fdOut, 'held1', '001.docx'))) {
+                await sleep(100)
+            }
+            assert.strict.deepEqual(false, c.done, 'split ended before the first output was written')
+            assert.strict.deepEqual([], ownerFiles())
+            await c.p
+
+            //規格①: 分割成功, 輸出含來源內容
+            assertSplit(c, 'MarkHeld1')
+
+            //規格①: 分割完H仍在, 文件數與未存文字不變
+            await assertHeldIntact(h)
+
+            //規格③: 分割器所開之WINWORD分割完即結束
+            assert.strict.deepEqual([], await waitWordGone(mine))
+        }
+        finally {
+            await h.stop()
+        }
+        assert.strict.deepEqual([], await waitWordGone(newPids()))
+
+        //規格: 不得開啟可見之Word視窗
+        await assertNoVisible(iw)
+    })
+
+    it('③例外路徑亦只結束自己之實例: 輸出路徑無效(輸入檔與輸出文件已開啟後失敗)、輸入檔不存在、輸入檔非docx皆回報error且不產生輸出檔, 他行程之Word仍在且文件不變, 分割器之WINWORD不殘留', async function() {
+        this.timeout(180000)
+        let iw = watch.lines.length
+        let h = await startHeldWord(fpStopOf('held3'))
+        try {
+            let fpOk = genSplit('ok3', 'MarkFail', 3)
+            let fpTxt = path.join(fdTmp, 'notdocx.docx')
+            fs.writeFileSync(fpTxt, 'this is plain text, not a docx')
+
+            //(a)輸出路徑無效: 輸入檔已開啟、輸出文件已新增後SaveAs2失敗, (b)輸入檔不存在: 開啟失敗, (c)輸入檔非docx: 開啟失敗; 分割器以標準輸出回報error: ...(開啟失敗之訊息含該檔名)
+            //  fpNone為不得出現之輸出(saveas為輸出夾本身: 分割器不建立輸出夾); fn為錯誤訊息須含之檔名
+            let fdNo = path.join(fdTmp, 'no-such-dir', 'o')
+            let cases = [
+                ['saveas', { fpIn: fpOk, strSep: sep, fdOut: fdNo, padZero: 3 }, fdNo, ''],
+                ['open', { fpIn: path.join(fdTmp, 'no-such.docx'), strSep: sep, fdOut: path.join(fdOut, 'o-open'), padZero: 3 }, path.join(fdOut, 'o-open', '001.docx'), 'no-such.docx'],
+                ['notdocx', { fpIn: fpTxt, strSep: sep, fdOut: path.join(fdOut, 'o-txt'), padZero: 3 }, path.join(fdOut, 'o-txt', '001.docx'), ''],
+            ]
+            for (let [name, inp, fpNone, fn] of cases) {
+                if (name !== 'saveas') {
+                    fs.mkdirSync(inp.fdOut, { recursive: true })
+                }
+                let rb = runExe(inp)
+                assert.strict.deepEqual(true, rb.out.startsWith('error: ') && rb.out.includes(fn), `${name}: ${rb.status} ${rb.out} ${rb.err}`)
+                assert.strict.deepEqual(false, fs.existsSync(fpNone), name)
+
+                //規格③: 每一例外之後他行程之Word皆仍在且文件不變
+                await assertHeldIntact(h)
+            }
+
+            //規格③: 分割器所開之WINWORD皆已結束
+            assert.strict.deepEqual([], await waitWordGone(newPids().filter((v) => v !== h.pid)))
+        }
+        finally {
+            await h.stop()
+        }
+        assert.strict.deepEqual([], await waitWordGone(newPids()))
+        await assertNoVisible(iw)
+    })
+
+    it('②兩行程交錯分割: 甲分割進行中時乙完整分割完一份, 兩者皆成功且輸出完整, 不殘留WINWORD', async function() {
+        this.timeout(180000)
+        let iw = watch.lines.length
+        let a = startSplit(genSplit('interleaveA', 'MarkInterleaveA', nHeavy), 'interleaveA')
+
+        //甲之Word已啟動(分割進行中)
+        assert.strict.deepEqual(true, await untilNewWord(a), 'split A ended before its WINWORD appeared')
+        let b = startSplit(genSplit('interleaveB', 'MarkInterleaveB', 3), 'interleaveB')
+        await b.p
+
+        //乙分割完時甲仍在進行(兩者確實交錯)
+        assert.strict.deepEqual(false, a.done, 'split A ended before B did')
+        await a.p
+
+        //規格②: 兩者皆成功, 各自輸出含其來源內容且不含對方之內容
+        assert.strict.deepEqual([true, true], [a.ok, b.ok], JSON.stringify({ A: a.err, B: b.err }))
+        assertSplit(a, 'MarkInterleaveA', ['MarkInterleaveB'])
+        assertSplit(b, 'MarkInterleaveB', ['MarkInterleaveA'])
+
+        //規格③: 不殘留WINWORD
+        assert.strict.deepEqual([], await waitWordGone(newPids()))
+        await assertNoVisible(iw)
+    })
+
+    it('②兩行程並行分割同一輸入檔(同時開始、錯開1.5秒, 各2次): 皆成功且輸出完整, 每次結束後不殘留WINWORD', async function() {
+        this.timeout(900000)
+        let iw = watch.lines.length
+        let fpIn = genSplit('race', 'MarkRace', nMid)
+        let rs = []
+        for (let rep = 0; rep < 2; rep++) {
+            for (let off of [0, 1500]) {
+                let name = `race-${off}-${rep}`
+
+                //maxWord, 分割期間同時存在之分割器WINWORD數(取樣觀察, 用以確認兩個實例確有重疊)
+                let maxWord = 0
+                let smp = { on: true }
+                let sampler = (async () => {
+                    while (smp.on) {
+                        maxWord = Math.max(maxWord, newPids().length)
+                        await sleep(300)
+                    }
+                })()
+
+                //off為情境參數(乙晚甲off毫秒開始), 非同步點
+                let [a, b] = await Promise.all([
+                    startSplit(fpIn, `${name}-a`).p,
+                    sleep(off).then(() => startSplit(fpIn, `${name}-b`).p),
+                ])
+                smp.on = false
+                await sampler
+                let full = (c) => c.ok && c.files.length === 2 && c.x1.includes('MarkRaceA') && c.x2.includes('MarkRaceB')
+                let left = await waitWordGone(newPids())
+                rs.push({ name, a: full(a) || a.err, b: full(b) || b.err, maxWord, left })
+            }
+        }
+
+        //規格②: 0失敗, 兩分割各自一個實例且期間重疊(同一輸入檔, 輸入檔以唯讀開啟故不跳「檔案使用中」); 規格③: 每次結束後不殘留WINWORD
+        assert.strict.deepEqual([], rs.filter((v) => v.a !== true || v.b !== true || v.maxWord < 2 || v.left.length > 0), JSON.stringify(rs))
+        await assertNoVisible(iw)
+    })
+
+    it('④本行程之Word被他行程(舊寫法Dispatch)連上並開文件時: 分割成功, 分割完不結束該實例, 對方之文件保留, 對方用畢結束後不殘留', async function() {
+        this.timeout(180000)
+        let iw = watch.lines.length
+        let b = null
+        let x = []
+        let c = startSplit(genSplit('borrowed', 'MarkBorrowed', nHeavy), 'borrowed')
+        try {
+
+            //x, 分割器之實例(本組開始時無其他Word, 故此時僅此一個)
+            assert.strict.deepEqual(true, await untilNewWord(c), 'split ended before its WINWORD appeared')
+            x = newPids()
+            assert.strict.deepEqual(1, x.length, JSON.stringify(x))
+
+            //他行程以GetActiveObject連上(分割器之Word啟動需時, 有界重試), 待實例內文件數達1(輸入檔已開啟)後新增文件、寫入未存文字
+            b = startBorrower(fpStopOf('borrower'), { text: 'unsaved-text-of-the-borrowing-client-408', attachMs: 30000, waitDocs: 1 })
+            let { line } = await b.waitLine(/^(ADDED|NOATTACH|VISIBLE|EXIT)/)
+            assert.strict.deepEqual('ADDED', line, b.lines.join(' / '))
+
+            //對方新增文件時分割仍在進行(其後分割器收尾才盤點實例內他人之文件)
+            assert.strict.deepEqual(false, c.done, 'split ended before the borrower added its document')
+            await c.p
+
+            //規格④: 分割成功, 輸出不含對方文件之文字
+            assertSplit(c, 'MarkBorrowed', [b.text])
+
+            //規格④: 對方於分割完後仍持有其同一份文件(文件數1, 以其文件參考讀得其未存文字), 即實例與該文件皆未被分割器關閉
+            let { line: lt } = await b.waitLine(/^(TEXTSET|SETFAIL|EXIT)/)
+            assert.strict.deepEqual('TEXTSET', lt, b.lines.join(' / '))
+            await b.stop()
+            assert.strict.deepEqual(true, b.lines.includes(`DOCS 1 ${b.text}`), b.lines.join(' / '))
+            b = null
+        }
+        finally {
+            if (b) {
+                await b.stop()
+            }
+            await c.p
+        }
+
+        //對方用畢以Quit結束該實例, 不殘留
+        assert.strict.deepEqual([], await waitWordGone(x))
+        assert.strict.deepEqual([], await waitWordGone(newPids()))
+        await assertNoVisible(iw)
+    })
+
+    it('⑤輸出路徑即輸入檔(輸入檔為輸出夾內之001.docx)時照改前行為: Word拒絕與開啟文件同名之儲存而回報錯誤, 輸入檔不變, 不殘留WINWORD', async function() {
+        this.timeout(180000)
+        let iw = watch.lines.length
+
+        //規格(不得改變分割之輸出與對外API): 改前以Dispatch開啟之輸入檔與輸出為同一路徑時, Word回報-2146823135(無法給一個與開啟文件相同的檔名), WDocxSplit以[E_SPLIT_FAILED]reject; 唯讀開啟時同一錯誤(例外為保留改前語意, 於本機不可觀察)
+        let fdS = path.join(fdOut, 'same')
+        let fpS = genSplit('same-src', 'MarkSame', 3)
+        fs.mkdirSync(fdS, { recursive: true })
+        let fpIn = path.join(fdS, '001.docx')
+        fs.copyFileSync(fpS, fpIn)
+        let bytes = fs.readFileSync(fpIn)
+        let err = await WDocxSplit(fpIn, sep, fdS, { padZero: 3 }).then(() => null).catch((e) => String(e))
+        assert.strict.deepEqual(true, typeof err === 'string' && err.startsWith('[E_SPLIT_FAILED] ') && err.includes('-2146823135'), String(err))
+        assert.strict.deepEqual(true, fs.readFileSync(fpIn).equals(bytes))
+        assert.strict.deepEqual(['001.docx'], fs.readdirSync(fdS))
+        assert.strict.deepEqual([], await waitWordGone(newPids()))
+        await assertNoVisible(iw)
     })
 
 })

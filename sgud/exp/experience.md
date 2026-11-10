@@ -31,3 +31,17 @@
 - 測試設計: 判定邏輯拆成純函數以便單元測試(不需 Word),真 Word 之整合案只覆蓋「非 docx、損毀 docx」兩種真實失敗;exe 之 sha256 釘在清單,無法以假 exe 替換,故不用假 exe 造失敗輸出.
 - 0 位元組之 `.docx` 被 Word 當空白文件成功開啟(exe 回 `success`、輸出 `001.docx`),不屬 exe 失敗,別拿它當失敗案例.
 - 變異腳本思路: 單一工作副本(`./tmp/docxsplit/mut/work`: `src/`、`bin/`〔exe 與清單〕、`test/`、`package.json`)逐式改 `src` 後以 mocha 絕對路徑執行,對照組前後各跑一次;變異字串避開 CRLF(只用單行子字串).
+
+## Word 實例隔離(2026-11-10,ds408)
+
+- 範本與規則見 `sgud/rule/rulebook.md` R-WORD(來源 w-html2docx hd408、w-docx2html dh408;本套件為其三.機轉細節〔pywin32 `Dispatch` = `_GetGoodDispatch` 先 GetActiveObject、`DispatchEx` 之實例仍可被他行程連上、強制結束 Word 留下 DisabledItems、唯讀開啟避免「檔案使用中」〕不重述,見該二套件之 `sgud/exp/experience.md`).以下只記本套件特有者.
+- **修前 exe 之紅(對舊 `Dispatch` 寫法)**:①他行程之隱藏 Word(H)存在時分割,不另起 WINWORD(借用 H);③例外路徑後 H 之文件數變 3(分割器之文件遺留在 H);②a 乙分割完,甲回 `物件已被刪除`(`-2146822463`);④借用者之最終讀取 `RPC 伺服器無法使用 0x800706BA`(實例已被 Quit);②b 兩分割各回 `遠端程序呼叫失敗 -2147023170`(8 次中 7 次失敗,另跳出「檔案使用中」與停用項目之 `#32770` 訊息框,看門狗各約 0.3 秒內結束).⑤(輸入即輸出)修前修後皆綠.
+- **分割耗時由段落數決定**:分割器逐段落經 COM 掃描(`p.Range.Text`)與拷貝(`Paragraphs(pi).Range`、`FormattedText`),實測 500 段約 9 秒、1500 段約 29 秒(約每 1000 段 20 秒),故以 `genSplit`(每側 400 段,共 800 段,約 15~19 秒)造「分割進行中」之確定時點,不需 http 扣住點;並行案每側 150 段(兩個實例同跑每份約 6~10 秒).可觀察之同步點:分割器之 WINWORD 出現;借用者見實例內文件數達 1(輸入檔已開啟);第一份輸出檔(`001.docx`)出現而 `002.docx` 尚未完成.
+- **唯讀開啟可由 `~$` 擁有者檔觀察**:可寫開啟時 Word 於輸入檔旁建立 `~$<檔名>.docx`,唯讀開啟不建立;①於分割進行中斷言夾內無 `~$` 檔,即不靠並行競賽(②b 之「檔案使用中」對話框)即可確定性地殺掉「輸入檔可寫開啟」之變異.
+- **輸入檔即輸出檔之情境**:輸入檔為 `fdOut/001.docx`(`padZero` 3)時,Word 對第一份輸出之 `SaveAs2` 回 `-2146823135`(無法給一個與開啟文件相同的檔名),`WDocxSplit` 以 `[E_SPLIT_FAILED]` reject,輸入檔不變、無其他輸出;改前即如此,唯讀開啟亦同,故 `isOutputName` 之可寫例外不可觀察(變異「一律唯讀」存活,屬等價變異),保留以維持改前語意(與 w-docx2html 之 R-WORD-04 同).
+- 分割器之 stderr 提示(`Word instance is kept since …`)與 stdout 之 `success` 由 `execProcess` 合併回傳;`judgeSplitOutput` 只看是否有 `error:` 起首行與整行 `success`,故保留實例時仍判成功(④ 實測).
+- 輸出 docx 之讀取:Word 存出之 docx 為 deflate 壓縮,測試輔助 `docxFixture.mjs` 之 `docxXml` 以 zip 中央目錄自行讀取 `word/document.xml`(無第三方依賴;本套件無 `fflate`).
+- 新舊 exe 之輸出等價(L3):3 組輸入(`test/docin.docx` 補零 3 位與不補零、500 段含中文與表情符號之生成 docx 補零 2 位)各跑舊 2 次、新 2 次,輸出各份 docx 之 `document.xml`、`styles.xml`、`numbering.xml`、`fontTable.xml`、`settings.xml`、`document.xml.rels`、`[Content_Types].xml` 去除 rsid 類標記後:前六者新舊相同;`settings.xml` 僅 `w:rsidRoot`/`w:rsid`/`w14:docId`/`w15:docId` 逐次不同(舊對舊、新對新亦同),為 Word 逐次雜訊.
+- 建置:`srcPython/build.bat` 為舊式手動腳本(`pyinstaller -F`、不存在之 `build.spec`、onedir 各接 `pause`,且 `-F` 會重產 `splitDocx.spec`),不能無人值守;本輪以 `python -m PyInstaller srcPython/splitDocx.spec --noconfirm --clean --distpath <暫存夾> --workpath <暫存夾>` 建置(與 `-F` 等效,約 10 秒;spec 檔不變),再把產物複製到 `bin/` 與 `src/`(R-BIN-DOCXSPLIT-01 規則 2).產物由 11,184,180 縮為約 9.5 MB(建置環境 Python 3.14.3、PyInstaller 6.22.3;與 w-docx2html 同).每次建置位元組不同,故每次重建後須重產清單.
+- **模擬夾不能通過「釘選提交位元組」案**:`unit-binManifest` 之「pin a commit whose bin/splitDocx.exe bytes equal the manifest」取 `manifest.commit` 內之 `git show` 位元組比對清單與實檔;模擬夾(新 exe＋改寫清單 sha256/大小、提交雜湊仍為舊值)下舊提交內為舊 exe,此案必紅,待主控提交新 exe 並以 `genBinManifest --commit <新提交>` 重產後才轉綠.不在模擬夾內自建提交(禁止 git commit);報告逐條列出此預期紅.
+- 測試之 `mocha --grep` 排除單案:`--grep "(?=.*Word instance isolation)(?!.*1\.5)"`(②b 標題含 `1.5`,ASCII 即可);經 Git Bash 傳遞時勿以 `/` 起首.模擬夾(複製 repo 追蹤檔至 `./tmp/<任務>/rc/`,換入新 exe 並改寫清單)以包裝腳本內之 `spawnSync` 參數陣列(不經 shell)執行 mocha,模組自上層 `node_modules` 解析;取鎖仍以 repo 根為 `--cwd`(包裝腳本由 repo 根經 `quiet-run --lock` 執行).
