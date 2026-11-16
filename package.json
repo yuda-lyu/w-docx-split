@@ -1,9 +1,9 @@
 {
   "name": "w-docx-split",
-  "version": "1.0.46",
+  "version": "1.0.47",
   "main": "dist/w-docx-split.umd.js",
   "dependencies": {
-    "wsemi": "^1.9.62"
+    "wsemi": "^1.9.63"
   },
   "devDependencies": {
     "w-package-tools": "^1.1.28"
