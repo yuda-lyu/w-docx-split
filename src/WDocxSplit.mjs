@@ -31,7 +31,7 @@ function isWindows() {
  * @param {String} fdOut 輸入轉出Docx檔位置字串
  * @param {Object} [opt={}] 輸入設定物件，預設{}
  * @param {Integer} [opt.padZero=0] 輸入是否補0位數整數，例如padZero=3時檔名會變成001.docx，預設0
- * @returns {Promise} 回傳Promise，resolve回傳成功訊息'ok'，reject回傳錯誤訊息字串。reject之字串有下列型態：參數檢測失敗為說明字串；取不到執行檔為`[錯誤代碼] 原因`(如`[E_OFFLINE_MISSING] ...`)；splitDocx.exe無法執行或離開碼非0為execProcess之訊息(如`code[N]:\n...`)；splitDocx.exe執行後自報失敗(如輸入非docx、docx損毀、Word無法開啟)為`[E_SPLIT_FAILED] 原因`，原因為exe輸出之診斷(已依系統字碼頁解碼，不回顯輸入路徑，但Word之診斷可能自行含檔名)，此時不會產生輸出檔(分割中途失敗時，失敗前已寫出之檔不會被清除)。splitDocx.exe不論成敗離開碼皆為0，故以其輸出判定成敗：須有`success`行且無`error:`行才resolve，空輸出或未知輸出亦視為失敗
+ * @returns {Promise} 回傳Promise，resolve回傳成功訊息'ok'，reject回傳錯誤訊息字串。reject之字串有下列型態：參數檢測失敗為說明字串；取不到執行檔為`[錯誤代碼] 原因`(如`[E_HASH_MISMATCH] ...`；離線缺檔為`[E_OFFLINE_MISSING] `加檔名與固定說明，字串不帶路徑與sha256，放置位置請呼叫`ensureBins()`自其錯誤之`err.missing[]`(`cachePath`、`mirrorPath`)取得)；splitDocx.exe無法執行或離開碼非0為execProcess之訊息(如`code[N]:\n...`)；splitDocx.exe執行後自報失敗(如輸入非docx、docx損毀、Word無法開啟)為`[E_SPLIT_FAILED] 原因`，原因為exe輸出之診斷(已依系統字碼頁解碼，不回顯輸入路徑，但Word之診斷可能自行含檔名)，此時不會產生輸出檔(分割中途失敗時，失敗前已寫出之檔不會被清除)。splitDocx.exe不論成敗離開碼皆為0，故以其輸出判定成敗：須有`success`行且無`error:`行才resolve，空輸出或未知輸出亦視為失敗
  * @example
  *
  * import w from 'wsemi'
@@ -95,6 +95,7 @@ async function WDocxSplit(fpIn, strSep, fdOut, opt = {}) {
     fdOut = path.resolve(fdOut)
 
     //prog, 經ensureBins取得splitDocx.exe(快取命中亦校驗, 未命中則自鏡像或GitHub取得並校驗), 本函數以字串reject, 故將帶code之Error轉為字串
+    //  訊息不帶路徑與sha256(規格V20): E_OFFLINE_MISSING時wsemi之訊息指向錯誤物件之missing欄位, 但字串無此欄位, 故改為只含檔名與固定說明(放置位置請呼叫ensureBins()自其err.missing[]之cachePath、mirrorPath取得); 其他錯誤碼沿用wsemi之訊息(其已不帶值與路徑)
     let prog = ''
     let errBin = null
     await ensureBins({ names: fnExe })
@@ -102,6 +103,14 @@ async function WDocxSplit(fpIn, strSep, fdOut, opt = {}) {
             prog = r[fnExe]
         })
         .catch((err) => {
+            if (get(err, 'code') === 'E_OFFLINE_MISSING') {
+                let names = (Array.isArray(get(err, 'missing')) ? err.missing : []).map((v) => get(v, 'name')).filter((v) => isestr(v))
+                if (names.length === 0) {
+                    names = [fnExe]
+                }
+                errBin = `[E_OFFLINE_MISSING] offline: ${names.join(', ')} is not in the cache or the mirror; to get where to place it, call ensureBins() of this package and read the err.missing[] (cachePath, mirrorPath) of its E_OFFLINE_MISSING error`
+                return
+            }
             errBin = `${isestr(get(err, 'code')) ? `[${err.code}] ` : ''}${isestr(get(err, 'message')) ? err.message : String(err)}`
         })
     if (errBin) {

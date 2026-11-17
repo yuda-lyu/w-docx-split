@@ -23,6 +23,7 @@
 - 2026-11-11 更新(ds408): `bin/splitDocx.exe` 與 `src/splitDocx.exe` 已換為 Word 實例隔離版(見上節),`bin/manifest.json` 待主控提交推送後以 `genBinManifest --commit <新提交>` 重產(此前清單仍指向前版提交 c85382f…).
 - 舊版相容: `src/splitDocx.exe` 保留於 repo(舊版自主幹下載;與 `bin/` 位元相同),不入 npm 包.
 - npm 包範圍(2026-11-02,規則 R-BIN-DOCXSPLIT-01 之 10): 依 `dspec/自有套件之npm發布範圍.md` 原則 1~4,`sgud/`、`docs/`、`test/`、`toolg/` 隨包(`npm pack --dry-run` 78 檔,其中 `sgud/` 3 檔、`test/tools/` 2 檔);`.npmignore` 首段抄 `.gitignore`、其後只有第 1 條(外部執行檔)排除項並加註;`test/unit-binManifest.test.mjs` T1 之「不得入包」只列外部執行檔與壓縮檔、`bin/` 除清單外之檔、`CLAUDE*.md`、`tmp/`、`test/_tmp/`、`.env`,並斷言 `sgud/state/state.md`、`test/tools/*` 隨包.執行期 `src/`+`dist/`+`bin/` 共 286,493 B(原無大小斷言,未新增).
+- 2026-11-18 更新(跟跑 wsemi 1.9.64,V20): 離線缺檔(`E_OFFLINE_MISSING`)之訊息不再含 sha256 與路徑,測試改驗 `err.missing[]` 欄位,`WDocxSplit()` 之字串改為只含檔名與「呼叫 `ensureBins()` 讀 `err.missing[]`」之固定說明,README〈外部執行檔〉已補放置位置之讀法;`npm test` 55 passing / 0 failing(修前 51 passing + 4 failing).
 - 規則: `sgud/rule/rulebook.md` R-BIN-DOCXSPLIT-01.
 - 測試: `test/unit-binManifest.test.mjs`、`test/api-ensureBins.test.mjs`(本機 HTTP `127.0.0.1:8967`、不連外網;子行程工具 `test/tools/ensureBinsChild.mjs`)、`test/WDocxSplit.test.mjs`(本機 HTTP `127.0.0.1:8968`;子行程工具 `test/tools/splitChild.mjs`).
 - 已知缺口與待辦:

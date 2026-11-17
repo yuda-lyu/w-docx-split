@@ -74,11 +74,11 @@ test()
 - 環境變數：
   - `W_BIN_CACHE=<資料夾>`：快取改放 `<資料夾>/w-docx-split/`（套件所在之 `node_modules` 唯讀時使用，多套件可共用同一資料夾）。
   - `W_BIN_MIRROR=<資料夾或 http(s) 網址>`：內網鏡像，先找鏡像再連 GitHub；結構為 `<鏡像>/w-docx-split/<sha256>/splitDocx.exe`。鏡像之檔同樣以清單校驗，不符即不用。
-  - `W_BIN_OFFLINE=1`：不連網，只用快取與鏡像；缺檔時錯誤（`E_OFFLINE_MISSING`）會列出缺哪些檔、sha256、大小與應放之完整路徑。
+  - `W_BIN_OFFLINE=1`：不連網，只用快取與鏡像；缺檔時錯誤（`E_OFFLINE_MISSING`）之訊息只列缺哪些檔與準備方法（不含 sha256 與路徑）；sha256、大小與應放之完整路徑（`cachePath`、有設鏡像時之 `mirrorPath`）見該錯誤之 `err.missing[]`。
 - 離線部署：
   1. 在可連網之電腦設 `W_BIN_CACHE=<空資料夾>`，呼叫本套件之 `ensureBins()` 一次（或使用到分割功能一次）。
   2. 把該資料夾整個帶到內網電腦，設 `W_BIN_MIRROR=<該資料夾>`（全離線時另設 `W_BIN_OFFLINE=1`）。
-- 取不到執行檔時，`WDocxSplit()` 以字串 reject，格式為 `[錯誤代碼] 原因`（如 `[E_OFFLINE_MISSING] …`）；`ensureBins()` 則 reject 帶 `code` 之 Error。執行檔取得後分割失敗者見〈Breaking changes〉（`[E_SPLIT_FAILED] 原因`）。
+- 取不到執行檔時，`WDocxSplit()` 以字串 reject，格式為 `[錯誤代碼] 原因`（如 `[E_OFFLINE_MISSING] …`）；離線缺檔之字串只含檔名與固定說明，**不含路徑與 sha256**（字串無結構欄位）。`ensureBins()` 則 reject 帶 `code` 之 Error，離線缺檔（`E_OFFLINE_MISSING`）時其 `err.missing[]` 逐檔載明 `name`、`sha256`、`size`、`cachePath`（應放入快取之完整路徑）、`mirrorPath`（有設鏡像時應放入鏡像之完整路徑，否則為 `null`）、`url` 等；**離線缺檔時之放置位置請自 `err.missing[]` 之 `cachePath`／`mirrorPath` 讀取**（`WDocxSplit()` 收到 `[E_OFFLINE_MISSING]` 字串時，於同環境呼叫 `ensureBins()` 即得）。執行檔取得後分割失敗者見〈Breaking changes〉（`[E_SPLIT_FAILED] 原因`）。
 - 舊版之 `src/autoDownloadFiles.mjs` 保留為經 `ensureBins` 之相容層（已標 `@deprecated`），回傳之路徑位於快取而非 `src/`。
 
 ```alias
@@ -92,6 +92,31 @@ async function test() {
     let bins = await ensureBins()
     console.log(bins['splitDocx.exe'])
     // => D:\xxx\node_modules\w-docx-split\bin-cache\<sha256>\splitDocx.exe
+
+}
+test()
+    .catch((err) => {
+        console.log('catch', err)
+    })
+```
+
+離線缺檔時，自 `err.missing[]` 讀取應放之位置：
+
+```alias
+import ensureBins from 'w-docx-split/src/ensureBins.mjs'
+
+async function test() {
+
+    //W_BIN_OFFLINE=1 且快取與鏡像皆無 splitDocx.exe 時
+    try {
+        await ensureBins()
+    }
+    catch (err) {
+        if (err.code === 'E_OFFLINE_MISSING') {
+            console.log(err.missing)
+            // => [ { name: 'splitDocx.exe', sha256: '…', size: …, cachePath: 'D:\\xxx\\…\\<sha256>\\splitDocx.exe', mirrorPath: null, url: '…', … } ]
+        }
+    }
 
 }
 test()

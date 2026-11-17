@@ -353,14 +353,30 @@ describe('WDocxSplit', function() {
             fs.rmSync(fdt, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })
         })
 
-        it('rejects a string "[E_OFFLINE_MISSING] ..." naming the file, sha256, size and the cache path, without any network access (T6, O3, E3)', async function() {
+        it('rejects a string "[E_OFFLINE_MISSING] ..." naming the file and pointing to ensureBins() err.missing[], without sha256 or paths and without any network access (T6, O3, E3, V20)', async function() {
             let err = await WDocxSplit(fpIn, strSep, path.join(fdt, 'out-off'), opt).then(() => null).catch((e) => e)
             assert.strict.equal(typeof err, 'string') //既有reject型態(字串)不變, 以`[code] message`呈現
             assert.strict.equal(err.startsWith('[E_OFFLINE_MISSING]'), true, err)
             let cachePath = path.join(fdCache, manifest.pkg, entry.sha256, entry.name)
-            for (let s of [entry.name, entry.sha256, String(entry.size), cachePath]) {
-                assert.strict.equal(err.includes(s), true, `message should include [${s}]: ${err}`)
+
+            //V20: 字串含檔名與固定說明(離線準備請呼叫ensureBins()並讀err.missing[]), 不含sha256、大小、快取位置與快取根
+            assert.strict.equal(err.includes(entry.name), true, err)
+            assert.strict.equal(err.includes('ensureBins()'), true, err)
+            assert.strict.equal(err.includes('err.missing[]'), true, err)
+            for (let s of [entry.sha256, String(entry.size), cachePath, fdCache, fdt]) {
+                assert.strict.equal(err.includes(s), false, `message should not include [${s}]: ${err}`)
             }
+
+            //應放之位置改由說明所指之途徑取得: 同環境下WDocxSplit.ensureBins()之err.missing[](規格O3、T6; 原案以字串內含sha256與路徑驗)
+            let errBins = await WDocxSplit.ensureBins().then(() => null).catch((e) => e)
+            assert.strict.equal(errBins instanceof Error, true)
+            assert.strict.equal(errBins.code, 'E_OFFLINE_MISSING', errBins.message)
+            assert.strict.equal(errBins.missing.length, 1)
+            assert.strict.equal(errBins.missing[0].name, entry.name)
+            assert.strict.equal(errBins.missing[0].sha256, entry.sha256)
+            assert.strict.equal(errBins.missing[0].size, entry.size)
+            assert.strict.equal(errBins.missing[0].cachePath, cachePath)
+
             assert.strict.deepStrictEqual(fetchCalls, [])
             assert.strict.equal(fs.existsSync(path.join(fdt, 'out-off', '001.docx')), false)
         })
